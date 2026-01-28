@@ -1186,11 +1186,13 @@ func (h *Handler) submitBranch(
 
 		if len(updates) > 0 {
 			editOpts := forge.EditChangeOptions{
-				Base:         upstreamBase,
 				Draft:        opts.Draft,
 				AddLabels:    labels,
 				AddReviewers: reviewers,
 				AddAssignees: opts.Assignees,
+			}
+			if pull.BaseName != upstreamBase {
+				editOpts.Base = upstreamBase
 			}
 
 			// remoteRepo is guaranteed to be available at this point.
