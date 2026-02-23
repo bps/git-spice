@@ -185,6 +185,7 @@ func updateNavigationComments(
 				nodes = append(nodes, &stackedChange{
 					Change:       downstackCR,
 					Base:         lastDownstackIdx,
+					Merged:       true,
 					urlFormatter: urlFormatter,
 				})
 				// Inform previous node about this node.
@@ -211,6 +212,28 @@ func updateNavigationComments(
 
 			base := nodes[baseIdx]
 			base.Aboves = append(base.Aboves, nodeIdx)
+		}
+	}
+
+	// Look up change states to mark merged/closed changes.
+	// This allows merged changes to be rendered with strikethrough.
+	if len(nodes) > 0 {
+		changeIDs := make([]forge.ChangeID, len(infos))
+		for i, info := range infos {
+			changeIDs[i] = info.Meta.ChangeID()
+		}
+
+		states, err := remoteRepo.ChangesStates(ctx, changeIDs)
+		if err != nil {
+			log.Warn("Could not query change states",
+				"error", err,
+			)
+		} else {
+			for i, s := range states {
+				if s == forge.ChangeMerged || s == forge.ChangeClosed {
+					nodes[i].Merged = true
+				}
+			}
 		}
 	}
 
@@ -429,6 +452,10 @@ type stackedChange struct {
 	Base   int // -1 = no base CR
 	Aboves []int
 
+	// Merged indicates that the change has been merged.
+	// Merged changes are rendered with strikethrough.
+	Merged bool
+
 	// urlFormatter, if set, formats the change as a markdown link.
 	// Used for forges that don't auto-link change references (e.g., Bitbucket).
 	urlFormatter func(forge.ChangeID) string
@@ -439,10 +466,14 @@ var _ stacknav.Node = (*stackedChange)(nil)
 func (s *stackedChange) BaseIdx() int { return s.Base }
 
 func (s *stackedChange) Value() string {
+	v := s.Change.String()
 	if s.urlFormatter != nil {
-		return s.urlFormatter(s.Change)
+		v = s.urlFormatter(s.Change)
 	}
-	return s.Change.String()
+	if s.Merged {
+		v = "~~" + v + "~~"
+	}
+	return v
 }
 
 const (

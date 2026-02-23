@@ -36,6 +36,11 @@ func TestUpdateNavigationComments(t *testing.T) {
 		sync            NavCommentSync
 		downstack       NavCommentDownstack
 
+		// changeStates maps change IDs to their state.
+		// If nil or a change ID is not present,
+		// the change is assumed to be open.
+		changeStates map[int]forge.ChangeState
+
 		// branches from trackedBranches that were just submitted.
 		submit []string
 
@@ -290,22 +295,22 @@ func TestUpdateNavigationComments(t *testing.T) {
 			// where idx corresponds to merged downstack nodes
 			wantComments: map[int]string{
 				123: joinLines(
-					"- #100",
-					"    - #101",
+					"- ~~#100~~",
+					"    - ~~#101~~",
 					"        - #123 ◀",
 					"            - #124",
 					"                - #125",
 				),
 				124: joinLines(
-					"- #100",
-					"    - #101",
+					"- ~~#100~~",
+					"    - ~~#101~~",
 					"        - #123",
 					"            - #124 ◀",
 					"                - #125",
 				),
 				125: joinLines(
-					"- #100",
-					"    - #101",
+					"- ~~#100~~",
+					"    - ~~#101~~",
 					"        - #123",
 					"            - #124",
 					"                - #125 ◀",
@@ -338,6 +343,53 @@ func TestUpdateNavigationComments(t *testing.T) {
 					"- #123",
 					"    - #124",
 					"        - #125 ◀",
+				),
+			},
+		},
+		{
+			name: "MergedTrackedBranch",
+			trackedBranches: []trackedBranch{
+				{Name: "feat1", ChangeID: 123},
+				{Name: "feat2", Base: "feat1", ChangeID: 124},
+				{Name: "feat3", Base: "feat2", ChangeID: 125},
+			},
+			changeStates: map[int]forge.ChangeState{
+				123: forge.ChangeMerged,
+			},
+			sync:   NavCommentSyncDownstack,
+			submit: []string{"feat3"},
+			wantComments: map[int]string{
+				123: joinLines(
+					"- ~~#123~~ ◀",
+					"    - #124",
+					"        - #125",
+				),
+				124: joinLines(
+					"- ~~#123~~",
+					"    - #124 ◀",
+					"        - #125",
+				),
+				125: joinLines(
+					"- ~~#123~~",
+					"    - #124",
+					"        - #125 ◀",
+				),
+			},
+		},
+		{
+			name: "ClosedTrackedBranch",
+			trackedBranches: []trackedBranch{
+				{Name: "feat1", ChangeID: 123},
+				{Name: "feat2", Base: "feat1", ChangeID: 124},
+			},
+			changeStates: map[int]forge.ChangeState{
+				124: forge.ChangeClosed,
+			},
+			submit: []string{"feat1"},
+			wantComments: map[int]string{
+				123: joinLines(
+					"- #123 ◀",
+					"    - ~~#124~~",
 				),
 			},
 		},
@@ -407,6 +459,25 @@ func TestUpdateNavigationComments(t *testing.T) {
 
 			mockRemoteRepo := forgetest.NewMockRepository(ctrl)
 			mockRemoteRepo.EXPECT().Forge().Return(mockForge).AnyTimes()
+			mockRemoteRepo.EXPECT().
+				ChangesStates(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, ids []forge.ChangeID) ([]forge.ChangeState, error) {
+					states := make([]forge.ChangeState, len(ids))
+					for i, id := range ids {
+						cid, ok := id.(shamhub.ChangeID)
+						if !ok {
+							states[i] = forge.ChangeOpen
+							continue
+						}
+						if s, ok := tt.changeStates[int(cid)]; ok {
+							states[i] = s
+						} else {
+							states[i] = forge.ChangeOpen
+						}
+					}
+					return states, nil
+				}).
+				AnyTimes()
 
 			var (
 				mu               sync.Mutex
@@ -538,6 +609,10 @@ func TestUpdateNavigationComments_deletedExternally(t *testing.T) {
 
 		mockRemoteRepo := forgetest.NewMockRepository(ctrl)
 		mockRemoteRepo.EXPECT().Forge().Return(mockForge).AnyTimes()
+		mockRemoteRepo.EXPECT().
+			ChangesStates(gomock.Any(), gomock.Any()).
+			Return([]forge.ChangeState{forge.ChangeOpen}, nil).
+			AnyTimes()
 
 		// UpdateChangeComment returns ErrNotFound,
 		// simulating the comment being deleted externally.
@@ -645,6 +720,16 @@ func TestUpdateNavigationComments_deletedExternally(t *testing.T) {
 
 		mockRemoteRepo := forgetest.NewMockRepository(ctrl)
 		mockRemoteRepo.EXPECT().Forge().Return(mockForge).AnyTimes()
+		mockRemoteRepo.EXPECT().
+			ChangesStates(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, ids []forge.ChangeID) ([]forge.ChangeState, error) {
+				states := make([]forge.ChangeState, len(ids))
+				for i := range states {
+					states[i] = forge.ChangeOpen
+				}
+				return states, nil
+			}).
+			AnyTimes()
 
 		// All UpdateChangeComment calls return ErrNotFound.
 		mockRemoteRepo.EXPECT().
@@ -765,6 +850,32 @@ func TestGenerateStackNavigationComment(t *testing.T) {
 				"- #123",
 				"    - #124 ◀",
 				"        - #125",
+			),
+		},
+		{
+			name: "MergedChange",
+			graph: []*stackedChange{
+				{Change: _changeID("123"), Base: -1, Merged: true},
+				{Change: _changeID("124"), Base: 0},
+				{Change: _changeID("125"), Base: 1},
+			},
+			current: 1,
+			want: joinLines(
+				"- ~~#123~~",
+				"    - #124 ◀",
+				"        - #125",
+			),
+		},
+		{
+			name: "MergedChange/Current",
+			graph: []*stackedChange{
+				{Change: _changeID("123"), Base: -1},
+				{Change: _changeID("124"), Base: 0, Merged: true},
+			},
+			current: 1,
+			want: joinLines(
+				"- #123",
+				"    - ~~#124~~ ◀",
 			),
 		},
 	}
