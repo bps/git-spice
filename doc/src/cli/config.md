@@ -507,6 +507,31 @@ This will render navigation comments like:
         - #125
 ```
 
+### spice.submit.navigationCommentStyle.footer
+
+<!-- gs:version unreleased -->
+
+Specifies the footer text for navigation comments.
+
+By default, git-spice appends
+"Change managed by git-spice" to navigation comments.
+This can be customized to any string,
+or set to `false` to hide the footer entirely.
+
+**Examples:**
+
+To hide the footer:
+
+```bash
+git config spice.submit.navigationCommentStyle.footer false
+```
+
+To use a custom footer:
+
+```bash
+git config spice.submit.navigationCommentStyle.footer "Managed by our team tooling."
+```
+
 ### spice.submit.navigationComment.downstack
 
 <!-- gs:version v0.20.0 -->

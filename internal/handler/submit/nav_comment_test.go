@@ -521,6 +521,7 @@ func TestUpdateNavigationComments(t *testing.T) {
 				tt.sync,
 				tt.downstack,
 				"",
+				"",
 				tt.submit,
 				func(context.Context) (forge.Repository, error) {
 					return mockRemoteRepo, nil
@@ -636,6 +637,7 @@ func TestUpdateNavigationComments_deletedExternally(t *testing.T) {
 			NavCommentAlways,
 			NavCommentSyncBranch,
 			NavCommentDownstackAll,
+			"",
 			"",
 			[]string{"feat1"},
 			func(context.Context) (forge.Repository, error) {
@@ -761,6 +763,7 @@ func TestUpdateNavigationComments_deletedExternally(t *testing.T) {
 			NavCommentAlways,
 			NavCommentSyncDownstack,
 			NavCommentDownstackAll,
+			"",
 			"",
 			[]string{"feat3"},
 			func(context.Context) (forge.Repository, error) {
@@ -895,7 +898,7 @@ func TestGenerateStackNavigationComment(t *testing.T) {
 				tt.want + "\n" +
 				_commentFooter + "\n" +
 				_commentMarker + "\n"
-			got := generateStackNavigationComment(tt.graph, tt.current, "", nil)
+			got := generateStackNavigationComment(tt.graph, tt.current, "", "", nil)
 			assert.Equal(t, want, got)
 
 			// Sanity check: All generated comments must match
@@ -915,13 +918,48 @@ func TestGenerateStackNavigationComment(t *testing.T) {
 		}
 		graph[0].Aboves = []int{1}
 
-		got := generateStackNavigationComment(graph, 1, "<-- you are here", nil)
+		got := generateStackNavigationComment(graph, 1, "<-- you are here", "", nil)
 		want := _commentHeader + "\n\n" +
 			joinLines(
 				"- #123",
 				"    - #124 <-- you are here",
 			) + "\n" +
 			_commentFooter + "\n" +
+			_commentMarker + "\n"
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("CustomFooter", func(t *testing.T) {
+		graph := []*stackedChange{
+			{Change: _changeID("123"), Base: -1},
+			{Change: _changeID("124"), Base: 0},
+		}
+		graph[0].Aboves = []int{1}
+
+		got := generateStackNavigationComment(graph, 1, "", "Powered by my tool.", nil)
+		want := _commentHeader + "\n\n" +
+			joinLines(
+				"- #123",
+				"    - #124 ◀",
+			) + "\n" +
+			"Powered by my tool.\n" +
+			_commentMarker + "\n"
+		assert.Equal(t, want, got)
+	})
+
+	t.Run("HiddenFooter", func(t *testing.T) {
+		graph := []*stackedChange{
+			{Change: _changeID("123"), Base: -1},
+			{Change: _changeID("124"), Base: 0},
+		}
+		graph[0].Aboves = []int{1}
+
+		got := generateStackNavigationComment(graph, 1, "", "false", nil)
+		want := _commentHeader + "\n\n" +
+			joinLines(
+				"- #123",
+				"    - #124 ◀",
+			) + "\n" +
 			_commentMarker + "\n"
 		assert.Equal(t, want, got)
 	})

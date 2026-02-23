@@ -143,6 +143,7 @@ type Options struct {
 	NavCommentSync      NavCommentSync      `name:"nav-comment-sync" config:"submit.navigationCommentSync" enum:"branch,downstack" default:"branch" hidden:"" help:"Which navigation comment to sync. Must be one of: branch, downstack."`
 	NavCommentDownstack NavCommentDownstack `name:"nav-comment-downstack" config:"submit.navigationComment.downstack" enum:"all,open" default:"all" hidden:"" help:"Which downstack CRs to include in navigation comments. Must be one of: all, open."`
 	NavCommentMarker    string              `name:"nav-comment-marker" config:"submit.navigationCommentStyle.marker" hidden:"" help:"Marker to use for the current change in navigation comments. Defaults to '◀'."`
+	NavCommentFooter    string              `name:"nav-comment-footer" config:"submit.navigationCommentStyle.footer" hidden:"" help:"Footer text for navigation comments. Set to 'false' to hide the footer."`
 
 	SkipRestackCheck SkipRestackCheck `config:"submit.skipRestackCheck" hidden:"" help:"When to skip the restack check. Must be one of: never, trunk, always." default:"never"`
 
@@ -388,6 +389,7 @@ func (h *Handler) SubmitBatch(ctx context.Context, req *BatchRequest) error {
 		opts.NavCommentSync,
 		opts.NavCommentDownstack,
 		opts.NavCommentMarker,
+		opts.NavCommentFooter,
 		branchesToComment,
 		h.RemoteRepository,
 	)
@@ -435,6 +437,7 @@ func (h *Handler) Submit(ctx context.Context, req *Request) error {
 		opts.NavCommentSync,
 		opts.NavCommentDownstack,
 		opts.NavCommentMarker,
+		opts.NavCommentFooter,
 		[]string{req.Branch},
 		h.RemoteRepository,
 	)

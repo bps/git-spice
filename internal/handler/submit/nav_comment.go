@@ -91,6 +91,7 @@ func updateNavigationComments(
 	navCommentSync NavCommentSync,
 	navCommentDownstack NavCommentDownstack,
 	navCommentMarker string,
+	navCommentFooter string,
 	submittedBranches []string,
 	getRemoteRepo func(context.Context) (forge.Repository, error),
 ) error {
@@ -411,7 +412,7 @@ func updateNavigationComments(
 		}
 
 		info := infos[idx]
-		commentBody := generateStackNavigationComment(nodes, idx, navCommentMarker, remoteRepo.Forge())
+		commentBody := generateStackNavigationComment(nodes, idx, navCommentMarker, navCommentFooter, remoteRepo.Forge())
 		if info.Meta.NavigationCommentID() == nil {
 			postc <- &postComment{
 				Branch: info.Branch,
@@ -499,6 +500,7 @@ func generateStackNavigationComment(
 	nodes []*stackedChange,
 	current int,
 	marker string,
+	footerOverride string,
 	f forge.Forge,
 ) string {
 	footer := _commentFooter
@@ -513,6 +515,18 @@ func generateStackNavigationComment(
 		}
 	}
 
+	// User-configured footer takes precedence
+	// over the forge-specific footer.
+	// "false" disables the footer entirely.
+	switch footerOverride {
+	case "":
+		// No override; use the forge default.
+	case "false":
+		footer = ""
+	default:
+		footer = footerOverride
+	}
+
 	var sb strings.Builder
 	sb.WriteString(_commentHeader)
 	sb.WriteString("\n\n")
@@ -524,9 +538,10 @@ func generateStackNavigationComment(
 	stacknav.Print(&sb, nodes, current, opts)
 
 	sb.WriteString("\n")
-	sb.WriteString(footer)
-
-	sb.WriteString("\n")
+	if footer != "" {
+		sb.WriteString(footer)
+		sb.WriteString("\n")
+	}
 	sb.WriteString(commentMarker)
 	sb.WriteString("\n")
 	return sb.String()
