@@ -21,8 +21,30 @@ type RestackResponse struct {
 // Restack restacks the given branch on top of its base branch,
 // handling movement of the base branch if necessary.
 //
-// Returns [ErrAlreadyRestacked] if the branch does not need to be restacked.
-func (s *Service) Restack(ctx context.Context, name string) (*RestackResponse, error) {
+// Returns [ErrAlreadyRestacked] if the branch does not need
+// to be restacked.
+func (s *Service) Restack(
+	ctx context.Context, name string,
+) (*RestackResponse, error) {
+	return s.restackWith(ctx, name, s.wt)
+}
+
+// RestackWorktree restacks the given branch
+// using the provided worktree for the rebase operation.
+// This is used when the branch is checked out
+// in a different worktree than the current one.
+//
+// Returns [ErrAlreadyRestacked] if the branch does not need
+// to be restacked.
+func (s *Service) RestackWorktree(
+	ctx context.Context, name string, wt GitWorktree,
+) (*RestackResponse, error) {
+	return s.restackWith(ctx, name, wt)
+}
+
+func (s *Service) restackWith(
+	ctx context.Context, name string, wt GitWorktree,
+) (*RestackResponse, error) {
 	b, err := s.LookupBranch(ctx, name)
 	if err != nil {
 		return nil, err // includes ErrNotExist
@@ -67,23 +89,27 @@ func (s *Service) Restack(ctx context.Context, name string) (*RestackResponse, e
 	// bar will still refer to A.
 	//
 	// In this case, merge-base --fork-point will give us A,
-	// and that should be the upstream (commit to start rebasing from)
+	// and that should be the upstream
+	// (commit to start rebasing from)
 	// if the recorded base hash is out of date
 	// because the user changed something externally.
 	if !s.repo.IsAncestor(ctx, upstream, b.Head) {
 		forkPoint, err := s.repo.ForkPoint(ctx, b.Base, name)
 		if err == nil {
 			if upstream != forkPoint {
-				s.log.Debug("Recorded base hash is out of date. Restacking from fork point.",
+				s.log.Debug(
+					"Recorded base hash is out of date."+
+						" Restacking from fork point.",
 					"base", b.Base,
 					"branch", name,
-					"forkPoint", forkPoint)
+					"forkPoint", forkPoint,
+				)
 			}
 			upstream = forkPoint
 		}
 	}
 
-	if err := s.wt.Rebase(ctx, git.RebaseRequest{
+	if err := wt.Rebase(ctx, git.RebaseRequest{
 		Onto:      baseHash.String(),
 		Upstream:  upstream.String(),
 		Branch:    name,
@@ -101,7 +127,8 @@ func (s *Service) Restack(ctx context.Context, name string) (*RestackResponse, e
 		return nil, fmt.Errorf("update base hash of %v: %w", name, err)
 	}
 
-	if err := tx.Commit(ctx, fmt.Sprintf("%v: restacked on %v", name, b.Base)); err != nil {
+	msg := fmt.Sprintf("%v: restacked on %v", name, b.Base)
+	if err := tx.Commit(ctx, msg); err != nil {
 		return nil, fmt.Errorf("update state: %w", err)
 	}
 

@@ -3,8 +3,10 @@ package spice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"go.abhg.dev/gs/internal/cli"
 	"go.abhg.dev/gs/internal/git"
 	"go.abhg.dev/gs/internal/must"
 	"go.abhg.dev/gs/internal/spice/state"
@@ -35,8 +37,115 @@ type BranchOntoRequest struct {
 // It DOES NOT modify the upstack branches of the branch being moved.
 // As this involves a rebase operation,
 // the caller should be prepared to rescue the operation if it fails.
-func (s *Service) BranchOnto(ctx context.Context, req *BranchOntoRequest) error {
-	must.NotBeEqualf(req.Branch, s.store.Trunk(), "cannot move trunk")
+func (s *Service) BranchOnto(
+	ctx context.Context, req *BranchOntoRequest,
+) error {
+	return s.branchOntoWith(ctx, req, s.wt)
+}
+
+// BranchOntoInWorktree moves a branch onto a new base
+// by rebasing it in another worktree
+// where the branch is checked out.
+//
+// If the worktree cannot be opened,
+// or if a conflict occurs during the rebase,
+// the operation falls back to updating state only
+// (SkipRebase) and logs a warning.
+// The branch will be left in a "needs restack" state
+// that can be resolved with 'git-spice branch restack'.
+func (s *Service) BranchOntoInWorktree(
+	ctx context.Context,
+	req *BranchOntoRequest,
+	branchWT string,
+) error {
+	otherWT, err := s.repo.OpenWorktree(ctx, branchWT)
+	if err != nil {
+		s.log.Warn(
+			"Could not open worktree,"+
+				" skipping rebase",
+			"branch", req.Branch,
+			"worktree", branchWT,
+			"error", err,
+		)
+		return s.branchOntoSkipRebase(ctx, req)
+	}
+
+	err = s.branchOntoWith(ctx, req, otherWT)
+	if err != nil {
+		var rebaseErr *git.RebaseInterruptError
+		if errors.As(err, &rebaseErr) {
+			// Conflict in the other worktree.
+			// Abort to leave it clean.
+			if abortErr := otherWT.RebaseAbort(
+				ctx,
+			); abortErr != nil {
+				s.log.Warn(
+					"Could not abort rebase"+
+						" in worktree",
+					"branch", req.Branch,
+					"worktree", branchWT,
+					"error", abortErr,
+				)
+			}
+			s.log.Warn(
+				"Conflict while moving branch"+
+					" in worktree,"+
+					" skipping rebase",
+				"branch", req.Branch,
+				"onto", req.Onto,
+				"worktree", branchWT,
+			)
+			s.log.Warn(
+				fmt.Sprintf(
+					"Run '%s branch restack'"+
+						" from the worktree"+
+						" to resolve",
+					cli.Name(),
+				),
+				"branch", req.Branch,
+			)
+		} else {
+			s.log.Warn(
+				"Could not move branch"+
+					" in worktree,"+
+					" skipping rebase",
+				"branch", req.Branch,
+				"onto", req.Onto,
+				"worktree", branchWT,
+				"error", err,
+			)
+		}
+		return s.branchOntoSkipRebase(ctx, req)
+	}
+
+	s.log.Info(
+		"Moved branch in worktree",
+		"branch", req.Branch,
+		"onto", req.Onto,
+		"worktree", branchWT,
+	)
+	return nil
+}
+
+// branchOntoSkipRebase updates state for a branch onto
+// without performing a rebase.
+func (s *Service) branchOntoSkipRebase(
+	ctx context.Context,
+	req *BranchOntoRequest,
+) error {
+	skipReq := *req
+	skipReq.SkipRebase = true
+	return s.branchOntoWith(ctx, &skipReq, s.wt)
+}
+
+func (s *Service) branchOntoWith(
+	ctx context.Context,
+	req *BranchOntoRequest,
+	wt GitWorktree,
+) error {
+	must.NotBeEqualf(
+		req.Branch, s.store.Trunk(), "cannot move trunk",
+	)
 
 	branch, err := s.LookupBranch(ctx, req.Branch)
 	if err != nil {
@@ -58,11 +167,14 @@ func (s *Service) BranchOnto(ctx context.Context, req *BranchOntoRequest) error 
 		ontoHash = onto.Head
 	}
 
-	// We're trying to move commits BaseHash..HEAD onto commit OntoHash.
+	// We're trying to move commits
+	// BaseHash..HEAD onto commit OntoHash.
 	//
-	// However, there's a possibility that BaseHash is reachable from OntoHash
+	// However, there's a possibility that
+	// BaseHash is reachable from OntoHash
 	// because the old base is also the base of onto,
-	// and we've already partially rebased and handled a conflict.
+	// and we've already partially rebased
+	// and handled a conflict.
 	//
 	// For example, suppose we have:
 	//
@@ -88,9 +200,11 @@ func (s *Service) BranchOnto(ctx context.Context, req *BranchOntoRequest) error 
 	// now includes commits OriginalBase..NewBase,
 	// which will fail for obvious reasons.
 	//
-	// To catch this, if OriginalBase is reachable from NewBase,
-	// we'll change the commit range to NewBase..Current.
-	// This will turn the rebase into a no-op, but it'll correctly update state.
+	// To catch this, if OriginalBase is reachable
+	// from NewBase, we'll change the commit range
+	// to NewBase..Current.
+	// This will turn the rebase into a no-op,
+	// but it'll correctly update state.
 	fromHash := branch.BaseHash
 	if s.repo.IsAncestor(ctx, fromHash, ontoHash) {
 		fromHash = ontoHash
@@ -100,7 +214,8 @@ func (s *Service) BranchOnto(ctx context.Context, req *BranchOntoRequest) error 
 		"branch", req.Branch,
 		"oldBase", branch.Base,
 		"newBase", req.Onto,
-		"commits", fromHash.Short()+".."+branch.Head.Short(),
+		"commits",
+		fromHash.Short()+".."+branch.Head.Short(),
 	)
 
 	branchTx := s.store.BeginBranchTx()
@@ -120,22 +235,27 @@ func (s *Service) BranchOnto(ctx context.Context, req *BranchOntoRequest) error 
 		BaseHash:        baseHash,
 		MergedDownstack: req.MergedDownstack,
 	}); err != nil {
-		return fmt.Errorf("set base of branch %s to %s: %w", req.Branch, req.Onto, err)
+		return fmt.Errorf(
+			"set base of branch %s to %s: %w",
+			req.Branch, req.Onto, err,
+		)
 	}
 
 	if !req.SkipRebase {
-		if err := s.wt.Rebase(ctx, git.RebaseRequest{
+		if err := wt.Rebase(ctx, git.RebaseRequest{
 			Branch:    req.Branch,
 			Upstream:  string(fromHash),
 			Onto:      ontoHash.String(),
 			Autostash: true,
-			Quiet:     true, // TODO: if verbose, disable this
+			Quiet:     true,
 		}); err != nil {
 			return fmt.Errorf("rebase: %w", err)
 		}
 	}
 
-	if err := branchTx.Commit(ctx, fmt.Sprintf("%v: onto %v", req.Branch, req.Onto)); err != nil {
+	if err := branchTx.Commit(ctx,
+		fmt.Sprintf("%v: onto %v", req.Branch, req.Onto),
+	); err != nil {
 		return fmt.Errorf("update state: %w", err)
 	}
 

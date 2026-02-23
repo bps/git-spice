@@ -50,10 +50,23 @@ var _ Store = (*state.Store)(nil)
 
 // Service provides access to spice.Service methods
 type Service interface {
-	LookupBranch(ctx context.Context, name string) (*spice.LookupBranchResponse, error)
-	ListAbove(ctx context.Context, branch string) ([]string, error)
-	BranchOnto(ctx context.Context, req *spice.BranchOntoRequest) error
-	RebaseRescue(ctx context.Context, req spice.RebaseRescueRequest) error
+	LookupBranch(
+		ctx context.Context, name string,
+	) (*spice.LookupBranchResponse, error)
+	ListAbove(
+		ctx context.Context, branch string,
+	) ([]string, error)
+	BranchOnto(
+		ctx context.Context, req *spice.BranchOntoRequest,
+	) error
+	BranchOntoInWorktree(
+		ctx context.Context,
+		req *spice.BranchOntoRequest,
+		branchWT string,
+	) error
+	RebaseRescue(
+		ctx context.Context, req spice.RebaseRescueRequest,
+	) error
 }
 
 var _ Service = (*spice.Service)(nil)
@@ -265,25 +278,33 @@ func (h *Handler) DeleteBranches(ctx context.Context, req *Request) error {
 				continue
 			}
 
-			// Check if the upstack branch is checked out in another worktree.
-			// If so, we need to skip the rebase operation
-			// and leave the branch in a "needs restack" state.
-			var skipRebase bool
+			ontoReq := &spice.BranchOntoRequest{
+				Branch: above,
+				Onto:   base,
+			}
+
+			// If the upstack branch is in another worktree,
+			// try to rebase it there.
 			if above != currentBranch {
 				if worktreePath, ok := branchWorktrees[above]; ok {
-					skipRebase = true
-					log.Warnf("%v: checked out in another worktree (%v), skipping rebase", above, worktreePath)
-					log.Warnf("%v: Run '%s branch restack' from that worktree to complete the rebase", above, cli.Name())
+					if err := h.Service.BranchOntoInWorktree(
+						ctx, ontoReq, worktreePath,
+					); err != nil {
+						log.Warnf(
+							"%v: %v", above, err,
+						)
+					}
+					log.Infof(
+						"%v: moved upstack onto %v",
+						above, base,
+					)
+					continue
 				}
 			}
 
 			log.Debug("Changing upstack branch to a new base",
 				"branch", above, "base", base)
-			if err := h.Service.BranchOnto(ctx, &spice.BranchOntoRequest{
-				Branch:     above,
-				Onto:       base,
-				SkipRebase: skipRebase,
-			}); err != nil {
+			if err := h.Service.BranchOnto(ctx, ontoReq); err != nil {
 				contCmd := []string{"branch", "delete"}
 				if req.Force {
 					contCmd = append(contCmd, "--force")

@@ -1,4 +1,5 @@
-// Package restack implements business logic for high-level restack operations.
+// Package restack implements business logic
+// for high-level restack operations.
 package restack
 
 import (
@@ -17,7 +18,7 @@ import (
 	"go.abhg.dev/gs/internal/spice/state"
 )
 
-//go:generate mockgen -package restack -destination mocks_test.go . GitWorktree,Service
+//go:generate mockgen -package restack -destination mocks_test.go . GitWorktree,GitRepository,Service
 
 // GitWorktree is a subet of the git.Worktree interface.
 type GitWorktree interface {
@@ -28,6 +29,16 @@ type GitWorktree interface {
 
 var _ GitWorktree = (*git.Worktree)(nil)
 
+// GitRepository provides access to Git repository operations
+// that don't require a worktree.
+type GitRepository interface {
+	OpenWorktree(
+		ctx context.Context, dir string,
+	) (*git.Worktree, error)
+}
+
+var _ GitRepository = (*git.Repository)(nil)
+
 // Store is a subset of the state.Store interface.
 type Store interface {
 	Trunk() string
@@ -35,9 +46,21 @@ type Store interface {
 
 // Service is a subset of the spice.Service interface.
 type Service interface {
-	BranchGraph(ctx context.Context, opts *spice.BranchGraphOptions) (*spice.BranchGraph, error)
-	Restack(ctx context.Context, name string) (*spice.RestackResponse, error)
-	RebaseRescue(ctx context.Context, req spice.RebaseRescueRequest) error
+	BranchGraph(
+		ctx context.Context,
+		opts *spice.BranchGraphOptions,
+	) (*spice.BranchGraph, error)
+	Restack(
+		ctx context.Context, name string,
+	) (*spice.RestackResponse, error)
+	RestackWorktree(
+		ctx context.Context,
+		name string,
+		wt spice.GitWorktree,
+	) (*spice.RestackResponse, error)
+	RebaseRescue(
+		ctx context.Context, req spice.RebaseRescueRequest,
+	) error
 }
 
 // Handler implements various restack operations.
@@ -46,6 +69,11 @@ type Handler struct {
 	Worktree GitWorktree   // required
 	Store    Store         // required
 	Service  Service       // required
+
+	// Repository provides access to other worktrees.
+	// If set, branches checked out in other worktrees
+	// will be restacked there instead of skipped.
+	Repository GitRepository // optional
 }
 
 // Scope specifies which branches are affected
@@ -151,17 +179,16 @@ func (h *Handler) Restack(ctx context.Context, req *Request) (int, error) {
 		}
 	}
 
-	// If any of the branches to be restacked
-	// are checked out in another Git worktree,
-	// we cannot restack anything upstack from that branch.
-	//
-	// And since branchesToRestack is in the restack order,
-	// we can check if a prior skipped branch affects the current branch
-	// by just checking the base of the skipped branch.
+	var restackCount int
+
+	// Restack branches in order.
+	// If a branch is checked out in another Git worktree,
+	// attempt to restack it there.
+	// If that's not possible, skip it and anything above it.
 	currentWT := h.Worktree.RootDir()
 	skipped := make(map[string]struct{})
-	branchesToActuallyRestack := branchesToRestack[:0]
 	var requestBranchWT string // worktree of request.Branch
+loop:
 	for _, branch := range branchesToRestack {
 		if branch == h.Store.Trunk() {
 			continue // skip restacking trunk branch
@@ -171,7 +198,10 @@ func (h *Handler) Restack(ctx context.Context, req *Request) (int, error) {
 			if _, baseSkipped := skipped[info.Base]; baseSkipped {
 				// Base branch not being restacked,
 				// so skip this as well.
-				h.Log.Warnf("%v: base branch %v was not restacked, skipping", branch, info.Base)
+				h.Log.Warnf(
+					"%v: base branch %v was not restacked,"+
+						" skipping", branch, info.Base,
+				)
 				skipped[branch] = struct{}{}
 				continue
 			}
@@ -181,44 +211,71 @@ func (h *Handler) Restack(ctx context.Context, req *Request) (int, error) {
 		if req.Branch == branch {
 			requestBranchWT = branchWT
 		}
+
+		// Branch is checked out in another worktree.
+		// Try to restack it there.
 		if branchWT != "" && branchWT != currentWT {
-			// Checked out in another worktree.
-			h.Log.Warnf("%v: checked out in another worktree (%v), skipping", branch, branchWT)
+			restacked, ok := h.restackInWorktree(
+				ctx, branch, branchWT,
+			)
+			if restacked {
+				restackCount++
+			}
+			if ok {
+				continue
+			}
+
+			// Cross-worktree restack failed.
+			// Skip this branch and cascade.
 			skipped[branch] = struct{}{}
 			continue
 		}
 
-		branchesToActuallyRestack = append(branchesToActuallyRestack, branch)
-	}
-	branchesToRestack = branchesToActuallyRestack
-
-	var restackCount int
-loop:
-	for _, branch := range branchesToRestack {
 		res, err := h.Service.Restack(ctx, branch)
 		if err != nil {
 			var rebaseErr *git.RebaseInterruptError
 			switch {
 			case errors.As(err, &rebaseErr):
-				// If the rebase is interrupted by a conflict,
-				// we'll resume by re-running this command.
-				return 0, h.Service.RebaseRescue(ctx, spice.RebaseRescueRequest{
-					Err:     rebaseErr,
-					Command: req.ContinueCommand,
-					Branch:  req.Branch,
-					Message: fmt.Sprintf("interrupted: restack branch %q", branch),
-				})
+				// If the rebase is interrupted
+				// by a conflict,
+				// we'll resume by re-running
+				// this command.
+				return 0, h.Service.RebaseRescue(
+					ctx,
+					spice.RebaseRescueRequest{
+						Err:     rebaseErr,
+						Command: req.ContinueCommand,
+						Branch:  req.Branch,
+						Message: fmt.Sprintf(
+							"interrupted:"+
+								" restack branch %q",
+							branch,
+						),
+					},
+				)
 
 			case errors.Is(err, state.ErrNotExist):
-				h.Log.Errorf("%v: branch not tracked: run '%s branch track %v' to track it", branch, cli.Name(), branch)
+				h.Log.Errorf(
+					"%v: branch not tracked:"+
+						" run '%s branch track %v'"+
+						" to track it",
+					branch, cli.Name(), branch,
+				)
 				return 0, errors.New("untracked branch")
 
 			case errors.Is(err, spice.ErrAlreadyRestacked):
-				h.Log.Infof("%v: branch does not need to be restacked.", branch)
+				h.Log.Infof(
+					"%v: branch does not need"+
+						" to be restacked.",
+					branch,
+				)
 				continue loop
 
 			default:
-				return 0, fmt.Errorf("restack branch %q: %w", branch, err)
+				return 0, fmt.Errorf(
+					"restack branch %q: %w",
+					branch, err,
+				)
 			}
 		}
 
@@ -227,12 +284,94 @@ loop:
 	}
 
 	if requestBranchWT != "" && requestBranchWT != currentWT {
-		h.Log.Warnf("%v: checked out in another worktree (%v), not checking out here", req.Branch, requestBranchWT)
+		h.Log.Warnf(
+			"%v: checked out in another worktree (%v),"+
+				" not checking out here",
+			req.Branch, requestBranchWT,
+		)
 	} else if restackCount > 0 {
 		if err := h.Worktree.CheckoutBranch(ctx, req.Branch); err != nil {
-			return 0, fmt.Errorf("checkout branch %v: %w", req.Branch, err)
+			return 0, fmt.Errorf(
+				"checkout branch %v: %w", req.Branch, err,
+			)
 		}
 	}
 
 	return restackCount, nil
+}
+
+// restackInWorktree attempts to restack a branch
+// in another worktree where it is checked out.
+//
+// It reports whether the branch was restacked,
+// and whether it's okay to continue with upstack branches.
+// If ok is false, the branch should be added to the skip list.
+func (h *Handler) restackInWorktree(
+	ctx context.Context, branch, branchWT string,
+) (restacked, ok bool) {
+	if h.Repository == nil {
+		h.Log.Warnf(
+			"%v: checked out in another worktree (%v),"+
+				" skipping",
+			branch, branchWT,
+		)
+		return false, false
+	}
+
+	otherWT, err := h.Repository.OpenWorktree(ctx, branchWT)
+	if err != nil {
+		h.Log.Warnf(
+			"%v: open worktree %v: %v, skipping",
+			branch, branchWT, err,
+		)
+		return false, false
+	}
+
+	res, err := h.Service.RestackWorktree(ctx, branch, otherWT)
+	if err != nil {
+		var rebaseErr *git.RebaseInterruptError
+		if errors.As(err, &rebaseErr) {
+			// Conflict in the other worktree.
+			// Abort to leave it clean,
+			// and tell the user to restack there.
+			if abortErr := otherWT.RebaseAbort(ctx); abortErr != nil {
+				h.Log.Warnf(
+					"%v: abort rebase in worktree %v: %v",
+					branch, branchWT, abortErr,
+				)
+			}
+			h.Log.Warnf(
+				"%v: conflict while restacking"+
+					" in worktree (%v)",
+				branch, branchWT,
+			)
+			h.Log.Warnf(
+				"%v: run '%s branch restack'"+
+					" from that worktree to resolve",
+				branch, cli.Name(),
+			)
+			return false, false
+		}
+
+		if errors.Is(err, spice.ErrAlreadyRestacked) {
+			h.Log.Infof(
+				"%v: branch does not need"+
+					" to be restacked.",
+				branch,
+			)
+			return false, true
+		}
+
+		h.Log.Warnf(
+			"%v: restack in worktree %v: %v, skipping",
+			branch, branchWT, err,
+		)
+		return false, false
+	}
+
+	h.Log.Infof(
+		"%v: restacked in worktree (%v) on %v",
+		branch, branchWT, res.Base,
+	)
+	return true, true
 }

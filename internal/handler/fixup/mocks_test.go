@@ -477,6 +477,45 @@ func (c *MockGitRepositoryMergeTreeCall) DoAndReturn(f func(context.Context, git
 	return c
 }
 
+// OpenWorktree mocks base method.
+func (m *MockGitRepository) OpenWorktree(ctx context.Context, dir string) (*git.Worktree, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OpenWorktree", ctx, dir)
+	ret0, _ := ret[0].(*git.Worktree)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// OpenWorktree indicates an expected call of OpenWorktree.
+func (mr *MockGitRepositoryMockRecorder) OpenWorktree(ctx, dir any) *MockGitRepositoryOpenWorktreeCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OpenWorktree", reflect.TypeOf((*MockGitRepository)(nil).OpenWorktree), ctx, dir)
+	return &MockGitRepositoryOpenWorktreeCall{Call: call}
+}
+
+// MockGitRepositoryOpenWorktreeCall wrap *gomock.Call
+type MockGitRepositoryOpenWorktreeCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockGitRepositoryOpenWorktreeCall) Return(arg0 *git.Worktree, arg1 error) *MockGitRepositoryOpenWorktreeCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockGitRepositoryOpenWorktreeCall) Do(f func(context.Context, string) (*git.Worktree, error)) *MockGitRepositoryOpenWorktreeCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockGitRepositoryOpenWorktreeCall) DoAndReturn(f func(context.Context, string) (*git.Worktree, error)) *MockGitRepositoryOpenWorktreeCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
 // PeelToCommit mocks base method.
 func (m *MockGitRepository) PeelToCommit(ctx context.Context, rev string) (git.Hash, error) {
 	m.ctrl.T.Helper()
@@ -614,6 +653,45 @@ func (c *MockServiceBranchGraphCall) Do(f func(context.Context, *spice.BranchGra
 
 // DoAndReturn rewrite *gomock.Call.DoAndReturn
 func (c *MockServiceBranchGraphCall) DoAndReturn(f func(context.Context, *spice.BranchGraphOptions) (*spice.BranchGraph, error)) *MockServiceBranchGraphCall {
+	c.Call = c.Call.DoAndReturn(f)
+	return c
+}
+
+// LookupWorktrees mocks base method.
+func (m *MockService) LookupWorktrees(ctx context.Context, branches []string) (map[string]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LookupWorktrees", ctx, branches)
+	ret0, _ := ret[0].(map[string]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LookupWorktrees indicates an expected call of LookupWorktrees.
+func (mr *MockServiceMockRecorder) LookupWorktrees(ctx, branches any) *MockServiceLookupWorktreesCall {
+	mr.mock.ctrl.T.Helper()
+	call := mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LookupWorktrees", reflect.TypeOf((*MockService)(nil).LookupWorktrees), ctx, branches)
+	return &MockServiceLookupWorktreesCall{Call: call}
+}
+
+// MockServiceLookupWorktreesCall wrap *gomock.Call
+type MockServiceLookupWorktreesCall struct {
+	*gomock.Call
+}
+
+// Return rewrite *gomock.Call.Return
+func (c *MockServiceLookupWorktreesCall) Return(arg0 map[string]string, arg1 error) *MockServiceLookupWorktreesCall {
+	c.Call = c.Call.Return(arg0, arg1)
+	return c
+}
+
+// Do rewrite *gomock.Call.Do
+func (c *MockServiceLookupWorktreesCall) Do(f func(context.Context, []string) (map[string]string, error)) *MockServiceLookupWorktreesCall {
+	c.Call = c.Call.Do(f)
+	return c
+}
+
+// DoAndReturn rewrite *gomock.Call.DoAndReturn
+func (c *MockServiceLookupWorktreesCall) DoAndReturn(f func(context.Context, []string) (map[string]string, error)) *MockServiceLookupWorktreesCall {
 	c.Call = c.Call.DoAndReturn(f)
 	return c
 }

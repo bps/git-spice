@@ -1,0 +1,63 @@
+# 'stack restack' with a branch checked out in another worktree.
+# The branch in the other worktree should be restacked there,
+# not skipped.
+
+as 'Test <test@example.com>'
+at '2026-02-23T21:00:00Z'
+
+mkdir repo
+cd repo
+git init
+git commit --allow-empty -m 'Initial commit'
+gs repo init
+
+# Create a stack: main -> feature1 -> feature2 -> feature3
+
+git add feature1.txt
+gs bc feature1 -m 'Add feature1'
+git add feature2.txt
+gs bc feature2 -m 'Add feature2'
+git add feature3.txt
+gs bc feature3 -m 'Add feature3'
+
+# Create a worktree for feature2.
+git worktree add ../wt-feature2 feature2
+
+# Move main to require restacking.
+gs bco main
+git add main-change.txt
+git commit -m 'Change on main'
+
+# Restack the stack from feature1.
+gs bco feature1
+gs stack restack
+
+# feature2 should have been restacked in the other worktree.
+stderr 'feature2: restacked in worktree'
+
+# All branches should be restacked correctly.
+git graph --branches
+cmp stdout $WORK/golden/branches.txt
+
+# Verify we're still on feature1.
+git branch --show-current
+stdout '^feature1$'
+
+-- repo/feature1.txt --
+feature1
+
+-- repo/feature2.txt --
+feature2
+
+-- repo/feature3.txt --
+feature3
+
+-- repo/main-change.txt --
+main change
+
+-- golden/branches.txt --
+* 973316c (feature3) Add feature3
+* 7f032ba (feature2) Add feature2
+* a62abc9 (HEAD -> feature1) Add feature1
+* 966cc06 (main) Change on main
+* e2e096d Initial commit

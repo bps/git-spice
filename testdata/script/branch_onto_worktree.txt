@@ -1,0 +1,64 @@
+# 'branch onto' with an upstack branch checked out
+# in another worktree.
+# The branch in the other worktree should be rebased there.
+
+as 'Test <test@example.com>'
+at '2026-02-25T16:00:00Z'
+
+mkdir repo
+cd repo
+git init
+git commit --allow-empty -m 'Initial commit'
+gs repo init
+
+# Create a stack: main -> feature1 -> feature2
+
+git add feature1.txt
+gs bc feature1 -m 'Add feature1'
+git add feature2.txt
+gs bc feature2 -m 'Add feature2'
+
+# Create a separate branch 'target' from main.
+
+gs bco main
+git add target.txt
+gs bc target -m 'Add target'
+
+# Check out feature2 in another worktree.
+
+gs bco feature1
+git worktree add ../wt-feature2 feature2
+
+# Move feature1 onto target.
+# This requires moving feature2 (upstack) back to main first.
+# feature2 is in another worktree.
+
+gs branch onto target
+stderr 'Moved branch in worktree.*branch=feature2.*onto=main'
+stderr 'feature1: moved onto target'
+
+# Verify the graph looks correct.
+
+git graph --branches
+cmp stdout $WORK/golden/branches.txt
+
+# Verify we're on feature1.
+
+git branch --show-current
+stdout '^feature1$'
+
+-- repo/feature1.txt --
+feature1
+
+-- repo/feature2.txt --
+feature2
+
+-- repo/target.txt --
+target
+
+-- golden/branches.txt --
+* 17a1c51 (HEAD -> feature1) Add feature1
+* fa9c415 (target) Add target
+| * 318f818 (feature2) Add feature2
+|/  
+* 1fa2acb (main) Initial commit

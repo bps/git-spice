@@ -44,6 +44,9 @@ type GitRepository interface {
 	PeelToCommit(ctx context.Context, rev string) (git.Hash, error)
 	ReadCommit(ctx context.Context, commitish string) (*git.CommitObject, error)
 	ListCommits(ctx context.Context, commits git.CommitRange) iter.Seq2[git.Hash, error]
+	OpenWorktree(
+		ctx context.Context, dir string,
+	) (*git.Worktree, error)
 }
 
 var _ GitRepository = (*git.Repository)(nil)
@@ -51,8 +54,16 @@ var _ GitRepository = (*git.Repository)(nil)
 // Service is a subset of the spice.Service interface.
 type Service interface {
 	Trunk() string
-	BranchGraph(ctx context.Context, opts *spice.BranchGraphOptions) (*spice.BranchGraph, error)
-	RebaseRescue(ctx context.Context, req spice.RebaseRescueRequest) error
+	BranchGraph(
+		ctx context.Context,
+		opts *spice.BranchGraphOptions,
+	) (*spice.BranchGraph, error)
+	LookupWorktrees(
+		ctx context.Context, branches []string,
+	) (map[string]string, error)
+	RebaseRescue(
+		ctx context.Context, req spice.RebaseRescueRequest,
+	) error
 }
 
 var _ Service = (*spice.Service)(nil)
@@ -191,35 +202,89 @@ func (h *Handler) FixupCommit(ctx context.Context, req *Request) error {
 
 	// Clean up the working tree before rebasing.
 	// We just committed the staged changes,
-	// and any unstaged changes will have been autostashed by parent.
-	if err := h.Worktree.Reset(ctx, "HEAD", git.ResetOptions{Mode: git.ResetHard}); err != nil {
-		return fmt.Errorf("reset working tree to new commit: %w", err)
+	// and any unstaged changes will have been
+	// autostashed by parent.
+	if err := h.Worktree.Reset(ctx, "HEAD",
+		git.ResetOptions{Mode: git.ResetHard},
+	); err != nil {
+		return fmt.Errorf(
+			"reset working tree to new commit: %w", err,
+		)
 	}
 
 	// TODO: for now we'll do this with a rebase.
-	// With git-replay or similar, we could do this without a rebase.
-	if err := h.Worktree.Rebase(ctx, git.RebaseRequest{
+	// With git-replay or similar,
+	// we could do this without a rebase.
+	rebaseReq := git.RebaseRequest{
 		Branch:   req.TargetBranch,
 		Onto:     newCommit.String(),
 		Upstream: req.TargetHash.String(),
-	}); err != nil {
-		// If the rebase is interrupted by a conflict,
-		// after it's resolved, just restack the upstack.
-		var rebaseErr *git.RebaseInterruptError
-		if errors.As(err, &rebaseErr) {
-			return h.Service.RebaseRescue(ctx, spice.RebaseRescueRequest{
-				Err:     rebaseErr,
-				Command: []string{"upstack", "restack", "--skip-start"},
-				Branch:  req.TargetBranch,
-			})
-		}
-
-		return fmt.Errorf("rebase onto new commit: %w", err)
 	}
 
-	return h.Restack.RestackUpstack(ctx, req.TargetBranch, &restack.UpstackOptions{
-		SkipStart: true,
-	})
+	// If the target branch is in another worktree,
+	// rebase there instead.
+	rebaseErr := func() error {
+		wts, err := h.Service.LookupWorktrees(
+			ctx, []string{req.TargetBranch},
+		)
+		if err != nil {
+			h.Log.Warn(
+				"Could not look up worktrees,"+
+					" rebasing in current worktree",
+				"error", err,
+			)
+			return h.Worktree.Rebase(ctx, rebaseReq)
+		}
+
+		branchWT := wts[req.TargetBranch]
+		if branchWT == "" {
+			return h.Worktree.Rebase(ctx, rebaseReq)
+		}
+
+		otherWT, err := h.Repository.OpenWorktree(
+			ctx, branchWT,
+		)
+		if err != nil {
+			h.Log.Warn(
+				"Could not open worktree,"+
+					" rebasing in current worktree",
+				"branch", req.TargetBranch,
+				"worktree", branchWT,
+				"error", err,
+			)
+			return h.Worktree.Rebase(ctx, rebaseReq)
+		}
+
+		return otherWT.Rebase(ctx, rebaseReq)
+	}()
+	if rebaseErr != nil {
+		// If the rebase is interrupted by a conflict,
+		// after it's resolved,
+		// just restack the upstack.
+		var interrupted *git.RebaseInterruptError
+		if errors.As(rebaseErr, &interrupted) {
+			return h.Service.RebaseRescue(ctx,
+				spice.RebaseRescueRequest{
+					Err: interrupted,
+					Command: []string{
+						"upstack", "restack",
+						"--skip-start",
+					},
+					Branch: req.TargetBranch,
+				},
+			)
+		}
+
+		return fmt.Errorf(
+			"rebase onto new commit: %w", rebaseErr,
+		)
+	}
+
+	return h.Restack.RestackUpstack(
+		ctx, req.TargetBranch, &restack.UpstackOptions{
+			SkipStart: true,
+		},
+	)
 }
 
 type branchGraph interface {

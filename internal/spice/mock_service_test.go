@@ -159,6 +159,21 @@ func (mr *MockGitRepositoryMockRecorder) MergeBase(ctx, a, b any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MergeBase", reflect.TypeOf((*MockGitRepository)(nil).MergeBase), ctx, a, b)
 }
 
+// OpenWorktree mocks base method.
+func (m *MockGitRepository) OpenWorktree(ctx context.Context, dir string) (*git.Worktree, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OpenWorktree", ctx, dir)
+	ret0, _ := ret[0].(*git.Worktree)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// OpenWorktree indicates an expected call of OpenWorktree.
+func (mr *MockGitRepositoryMockRecorder) OpenWorktree(ctx, dir any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OpenWorktree", reflect.TypeOf((*MockGitRepository)(nil).OpenWorktree), ctx, dir)
+}
+
 // PeelToCommit mocks base method.
 func (m *MockGitRepository) PeelToCommit(ctx context.Context, ref string) (git.Hash, error) {
 	m.ctrl.T.Helper()

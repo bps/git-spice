@@ -110,31 +110,71 @@ func (cmd *upstackOntoCmd) AfterApply(
 func (cmd *upstackOntoCmd) Run(
 	ctx context.Context,
 	log *silog.Logger,
+	wt *git.Worktree,
 	svc *spice.Service,
 	restackHandler RestackHandler,
 ) error {
 	// Implementation note:
-	// This is a pretty straightforward operation despite the large scope.
-	// It starts by rebasing only the current branch onto the target
-	// branch, updating internal state to point to the new base.
-	// Following that, an 'upstack restack' will handle the upstack branches.
-	err := svc.BranchOnto(ctx, &spice.BranchOntoRequest{
-		Branch: cmd.Branch,
-		Onto:   cmd.Onto,
-	})
+	// This is a pretty straightforward operation
+	// despite the large scope.
+	// It starts by rebasing only the current branch
+	// onto the target branch,
+	// updating internal state to point to the new base.
+	// Following that, an 'upstack restack'
+	// will handle the upstack branches.
+
+	// If the branch is checked out in another worktree,
+	// rebase it there.
+	currentWT := wt.RootDir()
+	worktrees, err := svc.LookupWorktrees(
+		ctx, []string{cmd.Branch},
+	)
+	if err != nil {
+		return fmt.Errorf("lookup worktrees: %w", err)
+	}
+
+	branchWT := worktrees[cmd.Branch]
+	if branchWT != "" && branchWT != currentWT {
+		err = svc.BranchOntoInWorktree(
+			ctx,
+			&spice.BranchOntoRequest{
+				Branch: cmd.Branch,
+				Onto:   cmd.Onto,
+			},
+			branchWT,
+		)
+	} else {
+		err = svc.BranchOnto(ctx, &spice.BranchOntoRequest{
+			Branch: cmd.Branch,
+			Onto:   cmd.Onto,
+		})
+	}
 	if err != nil {
 		// If the rebase is interrupted,
 		// we'll just re-run this command again later.
-		return svc.RebaseRescue(ctx, spice.RebaseRescueRequest{
-			Err:     err,
-			Command: []string{"upstack", "onto", cmd.Onto},
-			Branch:  cmd.Branch,
-			Message: fmt.Sprintf("interrupted: %s: upstack onto %s", cmd.Branch, cmd.Onto),
-		})
+		return svc.RebaseRescue(ctx,
+			spice.RebaseRescueRequest{
+				Err: err,
+				Command: []string{
+					"upstack", "onto", cmd.Onto,
+				},
+				Branch: cmd.Branch,
+				Message: fmt.Sprintf(
+					"interrupted: %s:"+
+						" upstack onto %s",
+					cmd.Branch, cmd.Onto,
+				),
+			},
+		)
 	}
-	log.Infof("%v: moved upstack onto %v", cmd.Branch, cmd.Onto)
+	log.Infof(
+		"%v: moved upstack onto %v",
+		cmd.Branch, cmd.Onto,
+	)
 
-	return restackHandler.RestackUpstack(ctx, cmd.Branch, &restack.UpstackOptions{
-		SkipStart: true,
-	})
+	return restackHandler.RestackUpstack(
+		ctx, cmd.Branch, &restack.UpstackOptions{
+			SkipStart: true,
+		},
+	)
 }

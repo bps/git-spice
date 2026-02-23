@@ -1,0 +1,77 @@
+# 'branch onto' with an upstack branch in another worktree
+# that conflicts during the move.
+# The conflict should be aborted, state updated,
+# and the user told to restack from that worktree.
+
+as 'Test <test@example.com>'
+at '2026-02-25T16:00:00Z'
+
+mkdir repo
+cd repo
+git init
+git add init.txt
+git commit -m 'Initial commit'
+gs repo init
+
+# Create a stack: main -> feature1 -> feature2
+# feature1 modifies a separate file (no conflict).
+# feature2 modifies init.txt (will conflict with main).
+
+git add feature1.txt
+gs bc feature1 -m 'feature1'
+
+cp $WORK/extra/feature2-init.txt init.txt
+git add init.txt
+gs bc feature2 -m 'feature2'
+
+# Create a conflicting change on main.
+
+gs bco main
+cp $WORK/extra/main-conflict.txt init.txt
+git add init.txt
+git commit -m 'Conflict on main'
+
+# Create a separate branch 'target' from main.
+
+git add target.txt
+gs bc target -m 'Add target'
+
+# Check out feature2 in another worktree.
+
+gs bco feature1
+git worktree add ../wt-feature2 feature2
+
+# Move feature1 onto target.
+# feature2 must move onto main, but conflicts.
+
+gs branch onto target
+
+# feature2 should conflict, abort, and warn.
+
+stderr 'Conflict while moving branch in worktree.*branch=feature2'
+stderr 'gs branch restack.*branch=feature2'
+
+# feature1 should still move onto target.
+
+stderr 'feature1: moved onto target'
+
+# The other worktree should be clean (rebase aborted).
+
+cd ../wt-feature2
+git status --porcelain
+stdout '^$'
+
+-- repo/init.txt --
+initial content
+
+-- repo/feature1.txt --
+feature1 content
+
+-- repo/target.txt --
+target content
+
+-- extra/feature2-init.txt --
+feature2 content
+
+-- extra/main-conflict.txt --
+main conflicting content

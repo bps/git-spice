@@ -49,6 +49,11 @@ type GitRepository interface {
 	RenameBranch(context.Context, git.RenameBranchRequest) error
 	DeleteBranch(context.Context, string, git.BranchDeleteOptions) error
 	HashAt(context.Context, string, string) (git.Hash, error)
+
+	// OpenWorktree opens a worktree at the given directory.
+	OpenWorktree(
+		ctx context.Context, dir string,
+	) (*git.Worktree, error)
 }
 
 // GitWorktree provides access to a Git worktree owned by a repository.

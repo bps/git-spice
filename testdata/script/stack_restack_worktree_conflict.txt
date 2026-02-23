@@ -1,0 +1,64 @@
+# 'stack restack' with a branch checked out in another worktree
+# that conflicts during restack.
+# The conflict should be aborted and the user told to restack
+# from that worktree.
+
+as 'Test <test@example.com>'
+at '2026-02-23T21:00:00Z'
+
+mkdir repo
+cd repo
+git init
+git add init.txt
+git commit -m 'Initial commit'
+gs repo init
+
+# Create a stack: main -> feature1 -> feature2
+# feature1 modifies a separate file (no conflict).
+# feature2 modifies init.txt (will conflict with main).
+
+git add feature1.txt
+gs bc feature1 -m 'feature1'
+
+cp $WORK/extra/feature2.txt init.txt
+git add init.txt
+gs bc feature2 -m 'feature2'
+
+# Create a worktree for feature2.
+# Must leave feature2 first.
+gs bco feature1
+git worktree add ../wt-feature2 feature2
+
+# Create a conflicting change on main.
+gs bco main
+cp $WORK/extra/main-conflict.txt init.txt
+git add init.txt
+git commit -m 'Conflict on main'
+
+# Restack from feature1.
+gs bco feature1
+gs stack restack
+
+# feature1 should restack fine.
+stderr 'feature1: restacked on main'
+
+# feature2 should conflict, abort, and warn.
+stderr 'feature2: conflict while restacking in worktree'
+stderr 'feature2: run ''gs branch restack'' from that worktree'
+
+# The other worktree should be clean (rebase aborted).
+cd ../wt-feature2
+git status --porcelain
+stdout '^$'
+
+-- repo/init.txt --
+initial content
+
+-- repo/feature1.txt --
+feature1 content
+
+-- extra/feature2.txt --
+feature2 content
+
+-- extra/main-conflict.txt --
+main conflicting content

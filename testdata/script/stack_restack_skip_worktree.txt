@@ -1,5 +1,7 @@
-# 'stack restack' with a non-linear stack where a branch is checked out in another worktree.
-# Should skip the branch in the worktree and anything stacked on top of it.
+# 'stack restack' with a non-linear stack
+# where a branch is checked out in another worktree.
+# The branch in the worktree should be restacked there,
+# and branches stacked on top of it should also be restacked.
 
 as 'Test <test@example.com>'
 at '2025-06-20T21:28:29Z'
@@ -14,7 +16,7 @@ gs repo init
 # main -> feature1 -> feature2 -> feature3
 #              '----> feature4 -> feature5
 
-# Create first stack: feaure1-3
+# Create first stack: feature1-3
 git add feature1.txt
 gs bc feature1 -m 'Add feature1'
 git add feature2.txt
@@ -30,7 +32,6 @@ git add feature5.txt
 gs bc feature5 -m 'Add feature5'
 
 # Create a worktree for feature2.
-# This will block restacking of feature2 and feature3.
 git worktree add ../wt-feature2 feature2
 
 # Move main to require restacking.
@@ -42,12 +43,16 @@ git commit -m 'Change on main that requires restacking'
 gs bco feature1
 gs stack restack
 
-# Verify warnings about skipped branches
-stderr 'WRN feature2: checked out in another worktree \(.+/wt-feature2\), skipping'
-stderr 'WRN feature3: base branch feature2 was not restacked, skipping'
+# Verify feature2 was restacked in its worktree.
+stderr 'feature2: restacked in worktree'
 
-# Verify that feature1, feature4, and feature5 were restacked
-# but feature2 and feature3 were not
+# Verify all branches were restacked.
+stderr 'feature1: restacked on main'
+stderr 'feature3: restacked on feature2'
+stderr 'feature4: restacked on feature1'
+stderr 'feature5: restacked on feature4'
+
+# Verify the graph shows all branches restacked.
 git graph --branches
 cmp stdout $WORK/golden/branches.txt
 
@@ -74,12 +79,11 @@ feature5
 main change
 
 -- golden/branches.txt --
-* 056aa97 (feature3) Add feature3
-* 8a1ddca (feature2) Add feature2
-* 62d71a8 Add feature1
+* 4561d46 (feature3) Add feature3
+* 24371c8 (feature2) Add feature2
 | * c7b4892 (feature5) Add feature5
 | * 449b09d (feature4) Add feature4
-| * 0166554 (HEAD -> feature1) Add feature1
-| * 28f9688 (main) Change on main that requires restacking
 |/  
+* 0166554 (HEAD -> feature1) Add feature1
+* 28f9688 (main) Change on main that requires restacking
 * cb6d6c3 Initial commit

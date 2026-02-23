@@ -7,6 +7,7 @@ import (
 
 	"go.abhg.dev/gs/internal/cli"
 	"go.abhg.dev/gs/internal/git"
+	"go.abhg.dev/gs/internal/handler/restack"
 	"go.abhg.dev/gs/internal/silog"
 	"go.abhg.dev/gs/internal/spice"
 	"go.abhg.dev/gs/internal/spice/state"
@@ -112,48 +113,110 @@ func (cmd *branchOntoCmd) Run(
 	branch, err := svc.LookupBranch(ctx, cmd.Branch)
 	if err != nil {
 		if errors.Is(err, state.ErrNotExist) {
-			return fmt.Errorf("branch not tracked: %s", cmd.Branch)
+			return fmt.Errorf(
+				"branch not tracked: %s", cmd.Branch,
+			)
 		}
 		return fmt.Errorf("get branch: %w", err)
 	}
 
 	aboves, err := svc.ListAbove(ctx, cmd.Branch)
 	if err != nil {
-		return fmt.Errorf("list branches above %s: %w", cmd.Branch, err)
+		return fmt.Errorf(
+			"list branches above %s: %w",
+			cmd.Branch, err,
+		)
 	}
 
-	// As long as there are any branches above this one,
-	// they need to be grafted onto this branch's original base.
-	// However, this move operation will be an 'upstack onto'
-	// as for each of these branches, we want to keep *their* upstacks.
+	// Look up worktrees for all branches involved
+	// so we can detect cross-worktree situations.
+	currentWT := wt.RootDir()
+	worktrees, err := svc.LookupWorktrees(ctx, aboves)
+	if err != nil {
+		return fmt.Errorf("lookup worktrees: %w", err)
+	}
+
+	// Branches above the current branch
+	// need to be grafted onto this branch's original base.
+	// This move operation is an 'upstack onto':
+	// for each of these branches,
+	// we want to keep *their* upstacks.
 	for _, above := range aboves {
+		aboveWT := worktrees[above]
+		if aboveWT != "" && aboveWT != currentWT {
+			// Branch is in another worktree.
+			// Rebase there directly.
+			if err := svc.BranchOntoInWorktree(
+				ctx,
+				&spice.BranchOntoRequest{
+					Branch: above,
+					Onto:   branch.Base,
+				},
+				aboveWT,
+			); err != nil {
+				log.Warnf("%v: %v", above, err)
+			}
+
+			// Restack upstack branches
+			// of the moved branch.
+			if err := restackHandler.RestackUpstack(
+				ctx, above,
+				&restack.UpstackOptions{
+					SkipStart: true,
+				},
+			); err != nil {
+				log.Warnf(
+					"%v: restack upstack: %v",
+					above, err,
+				)
+			}
+			continue
+		}
+
 		if err := (&upstackOntoCmd{
 			Branch: above,
 			Onto:   branch.Base,
-		}).Run(ctx, log, svc, restackHandler); err != nil {
-			return svc.RebaseRescue(ctx, spice.RebaseRescueRequest{
-				Err:     err,
-				Command: []string{"branch", "onto", cmd.Onto},
-				Branch:  cmd.Branch,
-				Message: fmt.Sprintf("interrupted: %s: branch onto %s", cmd.Branch, cmd.Onto),
-			})
+		}).Run(ctx, log, wt, svc, restackHandler); err != nil {
+			return svc.RebaseRescue(ctx,
+				spice.RebaseRescueRequest{
+					Err: err,
+					Command: []string{
+						"branch", "onto", cmd.Onto,
+					},
+					Branch: cmd.Branch,
+					Message: fmt.Sprintf(
+						"interrupted: %s:"+
+							" branch onto %s",
+						cmd.Branch, cmd.Onto,
+					),
+				},
+			)
 		}
 	}
 
 	// Only after the upstacks have been moved
-	// will we move the branch itself and update its internal state.
+	// will we move the branch itself
+	// and update its internal state.
 	if err := svc.BranchOnto(ctx, &spice.BranchOntoRequest{
 		Branch: cmd.Branch,
 		Onto:   cmd.Onto,
 	}); err != nil {
 		// If the rebase is interrupted,
 		// we'll just re-run this command again later.
-		return svc.RebaseRescue(ctx, spice.RebaseRescueRequest{
-			Err:     err,
-			Command: []string{"branch", "onto", cmd.Onto},
-			Branch:  cmd.Branch,
-			Message: fmt.Sprintf("interrupted: %s: branch onto %s", cmd.Branch, cmd.Onto),
-		})
+		return svc.RebaseRescue(ctx,
+			spice.RebaseRescueRequest{
+				Err: err,
+				Command: []string{
+					"branch", "onto", cmd.Onto,
+				},
+				Branch: cmd.Branch,
+				Message: fmt.Sprintf(
+					"interrupted: %s:"+
+						" branch onto %s",
+					cmd.Branch, cmd.Onto,
+				),
+			},
+		)
 	}
 
 	log.Infof("%s: moved onto %s", cmd.Branch, cmd.Onto)

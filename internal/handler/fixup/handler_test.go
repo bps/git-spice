@@ -255,6 +255,9 @@ func TestFixupCommit_success(t *testing.T) {
 		Trunk().
 		Return("main").
 		AnyTimes()
+	mockService.EXPECT().
+		LookupWorktrees(gomock.Any(), []string{"feature1"}).
+		Return(nil, nil)
 
 	// Will try to restack the upstack of feature1 (target branch)
 	mockRestack := NewMockRestackHandler(mockCtrl)

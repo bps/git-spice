@@ -396,14 +396,16 @@ func (cmd *mainCmd) AfterApply(ctx context.Context, kctx *kong.Context, logger *
 		kctx.BindSingletonProvider(func(
 			log *silog.Logger,
 			worktree *git.Worktree,
+			repo *git.Repository,
 			store *state.Store,
 			svc *spice.Service,
 		) (RestackHandler, error) {
 			return &restack.Handler{
-				Log:      log,
-				Worktree: worktree,
-				Store:    store,
-				Service:  svc,
+				Log:        log,
+				Worktree:   worktree,
+				Repository: repo,
+				Store:      store,
+				Service:    svc,
 			}, nil
 		}),
 		kctx.BindSingletonProvider(func(
