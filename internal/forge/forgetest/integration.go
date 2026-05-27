@@ -252,7 +252,7 @@ type IntegrationConfig struct {
 	Reviewers []string // required
 
 	// Assignees is a list of usernames that can be assigned to changes.
-	Assignees []string // required
+	Assignees []string // required unless SkipAssignees is true
 
 	// SetCommentsPageSize sets the page size for listing comments.
 	// This is used to test pagination.

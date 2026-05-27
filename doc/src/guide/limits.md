@@ -3,10 +3,10 @@ icon: octicons/stop-16
 title: Limitations
 description: >-
   Usage constraints and limitations when using git-spice
-  to interact with GitHub, GitLab, or Bitbucket Cloud.
+  to interact with GitHub, GitLab, Bitbucket Cloud, or Azure DevOps.
 ---
 
-Usage of git-spice with GitHub, GitLab, and Bitbucket Cloud
+Usage of git-spice with GitHub, GitLab, Bitbucket Cloud, and Azure DevOps
 runs into limitations of what is possible on those platforms,
 and how they handle Git commits.
 Some limitations imposed on git-spice are listed below.
@@ -135,6 +135,20 @@ compared to GitHub and GitLab:
   to list pull request templates.
 
 These are platform limitations, not git-spice limitations.
+
+## Azure DevOps limitations
+
+<!-- gs:version unreleased -->
+
+Azure DevOps support has some limitations
+compared to GitHub and GitLab:
+
+- **No PR assignees**: Azure DevOps pull requests have reviewers,
+  including required and optional reviewers,
+  but they do not have a separate assignee field.
+  The `--assign` flag is ignored.
+
+This is a platform limitation, not a git-spice limitation.
 
 ## Base branch change may dismiss approvals
 
